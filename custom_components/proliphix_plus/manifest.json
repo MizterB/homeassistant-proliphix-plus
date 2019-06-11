@@ -1,0 +1,10 @@
+{
+    "domain": "proliphix_plus",
+    "name": "Proliphix Plus",
+    "documentation": "https://github.com/MizterB/homeassistant-proliphix-plus",
+    "requirements": [],
+    "dependencies": [],
+    "codeowners": [
+        "@MizterB"
+    ]
+  }
