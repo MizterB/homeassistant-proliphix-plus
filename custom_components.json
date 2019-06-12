@@ -1,0 +1,12 @@
+{
+    "proliphix_plus": {
+    "version": "0.1",
+    "local_location": "/custom_components/proliphix_plus/__init__.py",
+    "remote_location": "https://raw.githubusercontent.com/MizterB/homeassistant-proliphix-plus/master/custom_components/proliphix_plus/__init__.py",
+    "visit_repo": "https://github.com/MizterB/homeassistant-proliphix-plus",
+    "changelog": "https://github.com/MizterB/homeassistant-proliphix-plus",
+    "resources": [
+    "https://raw.githubusercontent.com/MizterB/homeassistant-proliphix-plus/master/custom_components/proliphix_plus/climate.py"
+    ]
+    }
+}
