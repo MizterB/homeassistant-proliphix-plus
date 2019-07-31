@@ -5,14 +5,14 @@ This is a custom platform
 """
 from homeassistant.components.climate import ClimateDevice, PLATFORM_SCHEMA
 from homeassistant.components.climate.const import (
-    STATE_COOL, STATE_HEAT, STATE_IDLE, SUPPORT_TARGET_TEMPERATURE,
-    SUPPORT_TARGET_TEMPERATURE_HIGH, SUPPORT_TARGET_TEMPERATURE_LOW,
-    SUPPORT_OPERATION_MODE,
-    SUPPORT_AWAY_MODE, SUPPORT_HOLD_MODE, SUPPORT_FAN_MODE,
-    STATE_AUTO, STATE_FAN_ONLY)
+    HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_COOL, HVAC_MODE_HEAT_COOL, HVAC_MODE_FAN_ONLY,
+    FAN_AUTO, FAN_ON,
+    CURRENT_HVAC_OFF, CURRENT_HVAC_HEAT, CURRENT_HVAC_COOL, CURRENT_HVAC_IDLE,
+    ATTR_TARGET_TEMP_HIGH, ATTR_TARGET_TEMP_LOW,
+    SUPPORT_TARGET_TEMPERATURE, SUPPORT_TARGET_TEMPERATURE_RANGE, SUPPORT_FAN_MODE, SUPPORT_PRESET_MODE)
 from homeassistant.const import (
     CONF_HOST, CONF_PORT, CONF_PASSWORD, CONF_USERNAME, PRECISION_TENTHS, TEMP_FAHRENHEIT,
-    ATTR_TEMPERATURE, STATE_ON, STATE_OFF)
+    ATTR_TEMPERATURE)
 
 import logging
 import voluptuous as vol
@@ -134,14 +134,19 @@ THERM_SENSOR_STATE_MAP = {
     '2': 'Enabled'
 }
 
-'''
-SUPPORT_FLAGS = (SUPPORT_TARGET_TEMPERATURE | SUPPORT_TARGET_TEMPERATURE_HIGH | SUPPORT_TARGET_TEMPERATURE_LOW |
-				 SUPPORT_AWAY_MODE | SUPPORT_HOLD_MODE | SUPPORT_FAN_MODE |
-				 SUPPORT_OPERATION_MODE)
-'''
-SUPPORT_FLAGS = (SUPPORT_TARGET_TEMPERATURE |
-                 SUPPORT_AWAY_MODE | SUPPORT_HOLD_MODE | SUPPORT_FAN_MODE |
-                 SUPPORT_OPERATION_MODE)
+FAN_SCHEDULE = "Schedule"
+
+# Preset modes supported by this component
+PRESET_SCHEDULE = "Schedule"        # Restore the normal daily schedule
+PRESET_IN = "In"                    # Switch to 'In' schedule
+PRESET_OUT = "Out"                  # Switch to 'Out' schedule
+PRESET_AWAY = "Away"                # Switch to 'Away' schedule
+PRESET_ECO = "Eco"                  # Switch to 'Eco' mode
+PRESET_MANUAL_TEMP = "Override"     # Override currently scheduled activity until the next schedule change
+PRESET_MANUAL_PERM = "Hold"         # Override the schedule indefinitely
+
+PRESET_MODES = [PRESET_IN, PRESET_OUT, PRESET_AWAY,
+                PRESET_MANUAL_TEMP, PRESET_MANUAL_PERM]
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Required(CONF_HOST): cv.string,
@@ -285,6 +290,8 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
         self._holdUntil = None
         self._scheduleText = None
 
+        self._preset_mode = None
+
         # Initialize the object
         self.update()
         self._fixClockDrift()
@@ -294,8 +301,8 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
         """Handle all entity which are about to be added."""
         await super().async_added_to_hass()
         # Restore a saved state and process as needed
-        restoredState = await self.async_get_last_state()
-        self._restoreState(restoredState)
+        last_state = await self.async_get_last_state()
+        self._restore_last_state(last_state)
 
     @property
     def unique_id(self):
@@ -303,12 +310,11 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
         return self._serial
 
     @property
-    def supported_features(self):
-        """Return the list of supported features."""
-        supportFlags = SUPPORT_FLAGS
-        if self._configAwayModeEnabled:
-            supportFlags = (supportFlags | SUPPORT_AWAY_MODE)
-        return supportFlags
+    def name(self):
+        """Return the name of the thermostat."""
+        if self._siteName == "":
+            return self._deviceName
+        return "{}: {}".format(self._siteName, self._deviceName)
 
     @property
     def should_poll(self):
@@ -317,6 +323,7 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
 
     def update(self):
         """Update the data from the thermostat."""
+        time.sleep(1)
 
         # Use this to determine if something was set directly on the thermostat
         self._previousData = self._data
@@ -364,12 +371,30 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
         self._holdUntil = self._getHoldUntil()
         self._scheduleSummary = self._getScheduleSummary()
 
+
+        # Compute current preset based on setback status and current class
+        # Normal
+        if self._setbackStatus == "1":
+            # In
+            if self._currentClass == "1":
+                self._preset_mode = PRESET_IN
+            # Out
+            if self._currentClass == "2":
+                self._preset_mode = PRESET_OUT
+            # Away
+            if self._currentClass == "3":
+                self._preset_mode = PRESET_AWAY
+        # Hold
+        elif self._setbackStatus == "2":
+            self._preset_mode = PRESET_MANUAL_PERM
+        # Override
+        elif self._setbackStatus == "3":
+            self._preset_mode = PRESET_MANUAL_TEMP
+
     @property
-    def name(self):
-        """Return the name of the thermostat."""
-        if self._siteName == "":
-            return self._deviceName
-        return "{}: {}".format(self._siteName, self._deviceName)
+    def state(self):
+        """Return the current state."""
+        return super().state
 
     @property
     def precision(self):
@@ -377,9 +402,10 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
         return PRECISION_TENTHS
 
     @property
-    def device_state_attributes(self):
-        """Return the device specific state attributes."""
-        attributes = {
+    def state_attributes(self):
+        """Return the optional state attributes."""
+        default_attributes = super().state_attributes
+        custom_attributes = {
             "manufacturer": self._manufacturer,
             "serial": self._serial,
             "model": self._model,
@@ -397,17 +423,75 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
             "schedule_summary": self._scheduleSummary
         }
         if self._model in ["NT150", "NT160"]:
-            attributes["humidity"] = self._relativeHumidity
+            custom_attributes["humidity"] = self._relativeHumidity
         if self._model not in ["NT10"]:
-            attributes["remote_sensor_state"] = THERM_SENSOR_STATE_MAP.get(self._remoteSensorState)
+            custom_attributes["remote_sensor_state"] = THERM_SENSOR_STATE_MAP.get(self._remoteSensorState)
             if THERM_SENSOR_STATE_MAP.get(self._remoteSensorState) == "Enabled":
-                attributes["remote_sensor_temperature"] = float(self._remoteSensorTemperature) / 10
+                custom_attributes["remote_sensor_temperature"] = float(self._remoteSensorTemperature) / 10
+        attributes = {}
+        attributes.update(default_attributes)
+        attributes.update(custom_attributes)
         return attributes
 
     @property
     def temperature_unit(self):
         """Return the unit of measurement."""
         return TEMP_FAHRENHEIT
+
+    @property
+    def current_humidity(self):
+        """Return the current humidity."""
+        if self._model in ["NT150", "NT160"]:
+            return self._relativeHumidity
+        else:
+            return super().target_humidity
+
+    @property
+    def target_humidity(self):
+        """Return the humidity we try to reach."""
+        return super().target_humidity
+
+    @property
+    def hvac_mode(self):
+        """Return hvac operation ie. heat, cool mode.
+        Need to be one of HVAC_MODE_*.
+        """
+        # TODO: Re-enable Fan mode
+        if self._hvacMode == '2':
+            return HVAC_MODE_HEAT
+        elif self._hvacMode == '3':
+            return HVAC_MODE_COOL
+        elif self._hvacMode == '4':
+            return HVAC_MODE_HEAT_COOL
+        elif self._hvacMode == '1':
+            return HVAC_MODE_OFF
+        else:
+            return HVAC_MODE_OFF
+
+    @property
+    def hvac_modes(self):
+        """Return the list of available hvac operation modes.
+        Need to be a subset of HVAC_MODES.
+        """
+        # TODO: Re-enable Fan mode
+        return [HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_COOL, HVAC_MODE_HEAT_COOL]
+
+    @property
+    def hvac_action(self):
+        """Return the current running hvac operation if supported.
+        Need to be one of CURRENT_HVAC_*.
+        """
+        # TODO: Add logic for fan
+        if self.hvac_mode == HVAC_MODE_OFF:
+            return CURRENT_HVAC_OFF
+        elif self._hvacState in ['1', '2', '8', '9']:
+            return CURRENT_HVAC_IDLE
+        elif self._hvacState in ['3', '4', '5']:
+            return CURRENT_HVAC_HEAT
+        elif self._hvacState in ['6', '7']:
+            return CURRENT_HVAC_COOL
+        else:
+            return CURRENT_HVAC_IDLE
 
     @property
     def current_temperature(self):
@@ -446,69 +530,60 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
         return None
 
     @property
-    def current_humidity(self):
-        """Return the current humidity."""
-        if self._model in ["NT150", "NT160"]:
-            return self._relativeHumidity
-        return None
+    def preset_mode(self):
+        """Return the current preset mode, e.g., home, away, temp.
+        Requires SUPPORT_PRESET_MODE.
+        """
+        return self._preset_mode
 
     @property
-    def state(self):
-        """Return the current state."""
-        if THERM_HVAC_MODE_MAP.get(self._hvacMode) == "Off":
-            return STATE_OFF
-
-        hvacStateName = THERM_HVAC_STATE_MAP.get(self._hvacState, "")
-        if hvacStateName.startswith("Heat"):
-            return STATE_HEAT
-        elif hvacStateName.startswith("Cool"):
-            return STATE_COOL
-        else:
-            return STATE_IDLE
+    def preset_modes(self):
+        """Return a list of available preset modes.
+        Requires SUPPORT_PRESET_MODE.
+        """
+        return PRESET_MODES
 
     @property
-    def current_operation(self):
-        """Return the current state of the thermostat."""
-        if self._isEcoModeOn():
-            return "eco"
-
-        return THERM_HVAC_MODE_MAP.get(self._hvacMode, "").lower()
-
-    @property
-    def operation_list(self):
-        """Return the list of available operation modes."""
-        opmodes =  [op.lower() for op in list(THERM_HVAC_MODE_MAP.values())]
-
-        if self._configEcoModeEnabled:
-            opmodes.append("eco")
-
-        return opmodes
+    def is_aux_heat(self):
+        """Return true if aux heater.
+        Requires SUPPORT_AUX_HEAT.
+        """
+        raise NotImplementedError
 
     @property
-    def is_away_mode_on(self):
-        """Return if away mode is on."""
-        if THERM_CURRENT_CLASS_MAP.get(self._currentClass, "") != "In":
-            return True
+    def fan_mode(self):
+        """Return the fan setting.
+        Requires SUPPORT_FAN_MODE.
+        Infinity's internal value of 'off' displays as 'auto' on the thermostat
+        """
+        if self._fanMode == "1":
+            return FAN_AUTO
+        elif self._fanMode == "2":
+            return FAN_ON
+        elif self._fanMode == "3":
+            return FAN_SCHEDULE
+
 
     @property
-    def current_hold_mode(self):
-        """Return hold mode setting."""
-        return THERM_SETBACK_STATUS_MAP.get(self._setbackStatus)
+    def fan_modes(self):
+        """Return the list of available fan modes.
+        Requires SUPPORT_FAN_MODE.
+        """
+        return [FAN_AUTO, FAN_ON, FAN_SCHEDULE]
 
     @property
-    def is_on(self):
-        """Return true if the device is on."""
-        return THERM_HVAC_MODE_MAP.get(self._hvacMode, "") != "Off"
+    def swing_mode(self):
+        """Return the swing setting.
+        Requires SUPPORT_SWING_MODE.
+        """
+        raise NotImplementedError
 
     @property
-    def current_fan_mode(self):
-        """Return the fan setting."""
-        return THERM_FAN_MODE_MAP.get(self._fanMode)
-
-    @property
-    def fan_list(self):
-        """Return the list of available fan modes."""
-        return list(THERM_FAN_MODE_MAP.values())
+    def swing_modes(self):
+        """Return the list of available swing modes.
+        Requires SUPPORT_SWING_MODE.
+        """
+        raise NotImplementedError
 
     def set_temperature(self, **kwargs):
         """Set new target temperature."""
@@ -522,32 +597,100 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
             pass
         else:
             return
-        settings = {targetSetback: targetTemp}
+        # Enable a temporary override at the selected temperature
+        self._device.set({targetSetback: targetTemp, "thermSetbackStatus": '2'})
 
-        # Setting the temperature while Eco mode is on
-        if self._isEcoModeOn():
-            # Turn off hold - enable override (3)
-            settings["thermSetbackStatus"] = "3"
-        self._device.set(settings)
+    def set_humidity(self, humidity):
+        """Set new target humidity."""
+        raise NotImplementedError
 
-    def set_fan_mode(self, fan):
+    def set_fan_mode(self, fan_mode):
         """Set new fan mode."""
         for value, label in THERM_FAN_MODE_MAP.items():
-            if label == fan:
+            if label == fan_mode:
                 self._device.set({"4.1.3": value})
 
-    def set_operation_mode(self, operation_mode):
+    def set_hvac_mode(self, hvac_mode):
         """Set new operation mode."""
-        if operation_mode == "eco":
-            self._turnOnEcoMode()
-            return
 
         # Enable selected mode & return to 'normal' status (no hold or override)
         for value, label in THERM_HVAC_MODE_MAP.items():
-            if label.lower() == operation_mode:
+            if label.lower() == hvac_mode:
                 self._device.set({"thermHvacMode": value, "thermSetbackStatus": 1})
 
-    def turn_away_mode_on(self):
+    def set_swing_mode(self, swing_mode):
+        """Set new target swing operation."""
+        raise NotImplementedError
+
+    def set_preset_mode(self, preset_mode):
+        """Set new preset mode."""
+        # Skip if no change
+        if preset_mode == self._preset_mode:
+            return
+
+        # Set the normal weekly schedule to In/Out/Away based on preset
+        if preset_mode == PRESET_IN:
+            self._device.set(
+                {"4.1.9": "1", "4.4.3.2.1": "1", "4.4.3.2.2": "1", "4.4.3.2.3": "1", "4.4.3.2.4": "1",
+                 "4.4.3.2.5": "1", "4.4.3.2.6": "1", "4.4.3.2.7": "1"})
+        elif preset_mode == PRESET_OUT:
+            self._device.set(
+                {"4.1.9": "1", "4.4.3.2.1": "2", "4.4.3.2.2": "2", "4.4.3.2.3": "2", "4.4.3.2.4": "2",
+                 "4.4.3.2.5": "2", "4.4.3.2.6": "2", "4.4.3.2.7": "2"})
+        elif preset_mode == PRESET_AWAY:
+            self._device.set(
+                {"4.1.9": "1", "4.4.3.2.1": "3", "4.4.3.2.2": "3", "4.4.3.2.3": "3", "4.4.3.2.4": "3",
+                 "4.4.3.2.5": "3", "4.4.3.2.6": "3", "4.4.3.2.7": "3"})
+        elif preset_mode == PRESET_MANUAL_TEMP:
+            self._set_hold_mode('Override')
+        elif preset_mode == PRESET_MANUAL_PERM:
+            self._set_hold_mode('Hold')
+        elif preset_mode == PRESET_ECO:
+            self._turnOnEcoMode()
+        else:
+            _LOGGER.error("Invalid preset mode: {}".format(preset_mode))
+            return
+
+    def turn_aux_heat_on(self):
+        """Turn auxiliary heater on."""
+        raise NotImplementedError
+
+    def turn_aux_heat_off(self):
+        """Turn auxiliary heater off."""
+        raise NotImplementedError
+
+    @property
+    def supported_features(self):
+        """Return the list of supported features."""
+        baseline_features = (SUPPORT_FAN_MODE | SUPPORT_PRESET_MODE)
+        if self.hvac_mode == HVAC_MODE_HEAT_COOL:
+            return baseline_features | SUPPORT_TARGET_TEMPERATURE_RANGE
+        elif self.hvac_mode in [HVAC_MODE_HEAT, HVAC_MODE_COOL]:
+            return baseline_features | SUPPORT_TARGET_TEMPERATURE
+        else:
+            return baseline_features
+
+    @property
+    def min_temp(self):
+        """Return the minimum temperature."""
+        return super().min_temp
+
+    @property
+    def max_temp(self):
+        """Return the maximum temperature."""
+        return super().max_temp
+
+    @property
+    def min_humidity(self):
+        """Return the minimum humidity."""
+        return super().min_humidity
+
+    @property
+    def max_humidity(self):
+        """Return the maximum humidity."""
+        return super().max_humidity
+
+    def _turn_away_mode_on(self):
         """Turn away mode on by setting the default weekly schedule for each day to OUT."""
         self._device.set(
             {"4.4.3.2.1": "2", "4.4.3.2.2": "2", "4.4.3.2.3": "2", "4.4.3.2.4": "2", "4.4.3.2.5": "2", "4.4.3.2.6": "2",
@@ -555,7 +698,7 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
         time.sleep(1)   # Allow time for change to process, then force update
         self.update()
 
-    def turn_away_mode_off(self):
+    def _turn_away_mode_off(self):
         """Turn away mode off by setting the default weekly schedule for each day to IN."""
         self._device.set(
             {"4.4.3.2.1": "1", "4.4.3.2.2": "1", "4.4.3.2.3": "1", "4.4.3.2.4": "1", "4.4.3.2.5": "1", "4.4.3.2.6": "1",
@@ -563,14 +706,14 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
         time.sleep(1)   # Allow time for change to process, then force update
         self.update()
 
-    def set_hold_mode(self, hold):
+    def _set_hold_mode(self, hold):
         """Update hold mode."""
         # TODO: this can be enhanced
         for value, label in THERM_SETBACK_STATUS_MAP.items():
             if label == hold:
                 self._device.set({"thermSetbackStatus": value, "thermHoldDuration": "0"})
 
-    def _restoreState(self, restoredState):
+    def _restore_last_state(self, restoredState):
         '''
         Use this to restore custom computed attributes, such as holdUntil, scheduleSummary
         :param restoredState:
@@ -630,10 +773,10 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
         summary = ""
         setbackStatusLabel = THERM_SETBACK_STATUS_MAP.get(self._setbackStatus, "")
 
-        if self.is_on == False:
+        if self._hvacMode == '1':   # Off
             return "Off"
-        elif self._isEcoModeOn():
-            summary = "Eco mode"
+        #elif self._isEcoModeOn():
+        #    summary = "Eco mode"
         elif setbackStatusLabel == "Normal":
             summary = "{} - {} until {}".format(THERM_CURRENT_CLASS_MAP.get(self._currentClass),
                                                                    THERM_CURRENT_PERIOD_MAP.get(self._currentPeriod),
