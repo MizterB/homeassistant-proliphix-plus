@@ -1,9 +1,8 @@
 """Define a base client for interacting with a Proliphix thermostat."""
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 import logging
-from typing import Optional
 from urllib.parse import parse_qs, urlencode
 
 from aiohttp import BasicAuth, ClientSession
@@ -96,7 +95,7 @@ class Proliphix:
         password: str = "admin",
         ssl: bool = False,
         *,
-        session: Optional[ClientSession] = None,
+        session: ClientSession | None = None,
     ) -> None:
         """Initialize the Proliphix object."""
         self.host: str = host
@@ -120,7 +119,7 @@ class Proliphix:
             [OID.THERM_SETBACK_STATUS, OID.THERM_HOLD_DURATION], self._update_hold_until
         )
         self._register_change_callback(
-            OIDS_SCHEDULE + [OID.SYSTEM_TIME_SECS], self._update_current_schedule
+            [*OIDS_SCHEDULE, OID.SYSTEM_TIME_SECS], self._update_current_schedule
         )
 
     @property
@@ -210,7 +209,7 @@ class Proliphix:
             async with asyncio.timeout(CONNECT_TIMEOUT):
                 _LOGGER.debug("Connecting to Proliphix thermostat at %s", self.url)
                 await self.get_oids(OIDS_CORE)
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             _LOGGER.error(
                 "Failed to connect to Proliphix thermostat at %s after %s seconds",
                 self.url,
@@ -224,7 +223,7 @@ class Proliphix:
             async with asyncio.timeout(CONNECT_TIMEOUT):
                 _LOGGER.debug("Refreshing state attributes")
                 await self.get_oids(OIDS_STATE)
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             _LOGGER.error(
                 "Failed to refresh state attributes after %s seconds",
                 CONNECT_TIMEOUT,
@@ -237,7 +236,7 @@ class Proliphix:
             async with asyncio.timeout(CONNECT_TIMEOUT):
                 _LOGGER.debug("Refreshing schedule attributes")
                 await self.get_oids(OIDS_SCHEDULE)
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             _LOGGER.error(
                 "Failed to refresh schedule attributes after %s seconds",
                 CONNECT_TIMEOUT,
@@ -295,8 +294,7 @@ class Proliphix:
         val = self._cache.get(OID.TEMPERATURE_SCALE)
         if not val:
             return None
-        scale = next((s for s in TemperatureScale if s.value == val), None)
-        return scale
+        return next((s for s in TemperatureScale if s.value == val), None)
 
     @property
     def system_time(self) -> datetime | None:
@@ -305,11 +303,10 @@ class Proliphix:
         if not val:
             return None
         # The system time is in local time, but without offset data
-        systime = datetime.fromtimestamp(int(val), timezone.utc)
+        systime = datetime.fromtimestamp(int(val), UTC)
         # Prevent value conversions by overrding the timezone to the correct local one
         local_tzinfo = datetime.now().astimezone().tzinfo
-        systime_local = systime.replace(tzinfo=local_tzinfo)
-        return systime_local
+        return systime.replace(tzinfo=local_tzinfo)
 
     @property
     def temperature_local(self) -> float | None:
@@ -317,8 +314,7 @@ class Proliphix:
         val = self._cache.get(OID.THERM_SENSOR_TEMP_LOCAL)
         if not val:
             return None
-        temp = float(val) / 10
-        return temp
+        return float(val) / 10
 
     @property
     def temperature_remote_1(self) -> float | None:
@@ -326,8 +322,7 @@ class Proliphix:
         val = self._cache.get(OID.THERM_SENSOR_TEMP_REMOTE_1)
         if not val or val == "FAILED5":
             return None
-        temp = float(val) / 10
-        return temp
+        return float(val) / 10
 
     @property
     def temperature_remote_2(self) -> float | None:
@@ -335,8 +330,7 @@ class Proliphix:
         val = self._cache.get(OID.THERM_SENSOR_TEMP_REMOTE_2)
         if not val or val == "FAILED5":
             return None
-        temp = float(val) / 10
-        return temp
+        return float(val) / 10
 
     @property
     def hvac_mode(self) -> HVACMode | None:
@@ -344,8 +338,7 @@ class Proliphix:
         val = self._cache.get(OID.THERM_HVAC_MODE)
         if not val:
             return None
-        mode = next((m for m in HVACMode if m.value == val), None)
-        return mode
+        return next((m for m in HVACMode if m.value == val), None)
 
     @property
     def hvac_state(self) -> HVACState | None:
@@ -353,8 +346,7 @@ class Proliphix:
         val = self._cache.get(OID.THERM_HVAC_STATE)
         if not val:
             return None
-        state = next((s for s in HVACState if s.value == val), None)
-        return state
+        return next((s for s in HVACState if s.value == val), None)
 
     @property
     def fan_mode(self) -> FanMode | None:
@@ -362,8 +354,7 @@ class Proliphix:
         val = self._cache.get(OID.THERM_FAN_MODE)
         if not val:
             return None
-        mode = next((m for m in FanMode if m.value == val), None)
-        return mode
+        return next((m for m in FanMode if m.value == val), None)
 
     @property
     def fan_state(self) -> FanState | None:
@@ -371,8 +362,7 @@ class Proliphix:
         val = self._cache.get(OID.THERM_FAN_STATE)
         if not val:
             return None
-        state = next((f for f in FanState if f.value == val), None)
-        return state
+        return next((f for f in FanState if f.value == val), None)
 
     @property
     def setback_heat(self) -> float | None:
@@ -380,8 +370,7 @@ class Proliphix:
         val = self._cache.get(OID.THERM_SETBACK_HEAT)
         if not val:
             return None
-        temp = float(val) / 10
-        return temp
+        return float(val) / 10
 
     @property
     def setback_cool(self) -> float | None:
@@ -389,8 +378,7 @@ class Proliphix:
         val = self._cache.get(OID.THERM_SETBACK_COOL)
         if not val:
             return None
-        temp = float(val) / 10
-        return temp
+        return float(val) / 10
 
     @property
     def setback_status(self) -> SetbackStatus | None:
@@ -398,8 +386,7 @@ class Proliphix:
         val = self._cache.get(OID.THERM_SETBACK_STATUS)
         if not val:
             return None
-        status = next((s for s in SetbackStatus if s.value == val), None)
-        return status
+        return next((s for s in SetbackStatus if s.value == val), None)
 
     @property
     def current_period(self) -> CurrentPeriod | None:
@@ -407,8 +394,7 @@ class Proliphix:
         val = self._cache.get(OID.THERM_CURRENT_PERIOD)
         if not val:
             return None
-        scale = next((p for p in CurrentPeriod if p.value == val), None)
-        return scale
+        return next((p for p in CurrentPeriod if p.value == val), None)
 
     @property
     def current_class(self) -> ScheduleClass | None:
@@ -416,8 +402,7 @@ class Proliphix:
         val = self._cache.get(OID.THERM_CURRENT_CLASS)
         if not val:
             return None
-        scale = next((c for c in ScheduleClass if c.value == val), None)
-        return scale
+        return next((c for c in ScheduleClass if c.value == val), None)
 
     @property
     def relative_humidity(self) -> float | None:
@@ -427,8 +412,7 @@ class Proliphix:
         val = self._cache.get(OID.THERM_RELATIVE_HUMIDITY)
         if not val:
             return None
-        humidity = float(val) / 10
-        return humidity
+        return float(val) / 10
 
     @property
     def hold_duration(self) -> int | None:
@@ -504,7 +488,7 @@ class Proliphix:
         self._current_schedule = current_schedule
 
         next_period = None
-        next_period_start = datetime.max.replace(tzinfo=timezone.utc)
+        next_period_start = datetime.max.replace(tzinfo=UTC)
         for period, start in current_schedule[self.current_class].items():
             if start > self.system_time and start <= next_period_start:
                 next_period = period

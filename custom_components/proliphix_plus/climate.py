@@ -3,31 +3,53 @@ Support for Proliphix  Thermostats.
 
 This is a custom platform
 """
-from homeassistant.components.climate import ClimateDevice, PLATFORM_SCHEMA
-from homeassistant.components.climate.const import (
-    HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_COOL, HVAC_MODE_HEAT_COOL, HVAC_MODE_FAN_ONLY,
-    FAN_AUTO, FAN_ON,
-    CURRENT_HVAC_OFF, CURRENT_HVAC_HEAT, CURRENT_HVAC_COOL, CURRENT_HVAC_IDLE,
-    ATTR_TARGET_TEMP_HIGH, ATTR_TARGET_TEMP_LOW,
-    SUPPORT_TARGET_TEMPERATURE, SUPPORT_TARGET_TEMPERATURE_RANGE, SUPPORT_FAN_MODE, SUPPORT_PRESET_MODE)
-from homeassistant.const import (
-    CONF_HOST, CONF_PORT, CONF_PASSWORD, CONF_USERNAME, PRECISION_TENTHS, TEMP_FAHRENHEIT,
-    ATTR_TEMPERATURE)
 
+import datetime
 import logging
+import time
+from urllib.parse import urlencode
+
+import dateutil.parser
+import requests
 import voluptuous as vol
+
+from homeassistant.components.climate import PLATFORM_SCHEMA, ClimateDevice
+from homeassistant.components.climate.const import (
+    ATTR_TARGET_TEMP_HIGH,
+    ATTR_TARGET_TEMP_LOW,
+    CURRENT_HVAC_COOL,
+    CURRENT_HVAC_HEAT,
+    CURRENT_HVAC_IDLE,
+    CURRENT_HVAC_OFF,
+    FAN_AUTO,
+    FAN_ON,
+    HVAC_MODE_COOL,
+    HVAC_MODE_FAN_ONLY,
+    HVAC_MODE_HEAT,
+    HVAC_MODE_HEAT_COOL,
+    HVAC_MODE_OFF,
+    SUPPORT_FAN_MODE,
+    SUPPORT_PRESET_MODE,
+    SUPPORT_TARGET_TEMPERATURE,
+    SUPPORT_TARGET_TEMPERATURE_RANGE,
+)
+from homeassistant.const import (
+    ATTR_TEMPERATURE,
+    CONF_HOST,
+    CONF_PASSWORD,
+    CONF_PORT,
+    CONF_USERNAME,
+    PRECISION_TENTHS,
+    TEMP_FAHRENHEIT,
+)
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.restore_state import RestoreEntity
 
-import time, datetime, dateutil.parser
-import requests
-from urllib.parse import urlencode
-
 _LOGGER = logging.getLogger(__name__)
 
-'''
+"""
 Mapping of Proliphix OID values to friendly names
-'''
+"""
 # Data to be retrieved whenever polling the thermostat status
 OID_MAP = {
     "1.2": "commonDevName",
@@ -61,99 +83,82 @@ OID_MAP = {
     "4.4.1.3.3.1": "thermPeriodStartAwayMorning",
     "4.4.1.3.3.2": "thermPeriodStartAwayDay",
     "4.4.1.3.3.3": "thermPeriodStartAwayEvening",
-    "4.4.1.3.3.4": "thermPeriodStartAwayNight"
+    "4.4.1.3.3.4": "thermPeriodStartAwayNight",
 }
 
-THERM_HVAC_MODE_MAP = {
-    '1': 'Off',
-    '2': 'Heat',
-    '3': 'Cool',
-    '4': 'Auto'
-}
+THERM_HVAC_MODE_MAP = {"1": "Off", "2": "Heat", "3": "Cool", "4": "Auto"}
 
 THERM_HVAC_STATE_MAP = {
-    '1': 'Initializing',
-    '2': 'Off',
-    '3': 'Heat',
-    '4': 'Heat2',
-    '5': 'Heat3',
-    '6': 'Cool',
-    '7': 'Cool2',
-    '8': 'Delay',
-    '9': 'ResetRelays'
+    "1": "Initializing",
+    "2": "Off",
+    "3": "Heat",
+    "4": "Heat2",
+    "5": "Heat3",
+    "6": "Cool",
+    "7": "Cool2",
+    "8": "Delay",
+    "9": "ResetRelays",
 }
 
-THERM_FAN_MODE_MAP = {
-    '1': 'Auto',
-    '2': 'On',
-    '3': 'Schedule'
-}
+THERM_FAN_MODE_MAP = {"1": "Auto", "2": "On", "3": "Schedule"}
 
-THERM_FAN_STATE_MAP = {
-    '0': 'Init',
-    '1': 'Off',
-    '2': 'On'
-}
+THERM_FAN_STATE_MAP = {"0": "Init", "1": "Off", "2": "On"}
 
 THERM_SETBACK_STATUS_MAP = {
-    '1': 'Normal',
-    '2': 'Hold',
-    '3': 'Override',
-    '4': 'Unknown',
-    '5': 'Unknown',
-    '6': 'Unknown',
-    '7': 'Unknown'
+    "1": "Normal",
+    "2": "Hold",
+    "3": "Override",
+    "4": "Unknown",
+    "5": "Unknown",
+    "6": "Unknown",
+    "7": "Unknown",
 }
 
-THERM_CURRENT_PERIOD_MAP = {
-    '1': 'Morning',
-    '2': 'Day',
-    '3': 'Evening',
-    '4': 'Night'
-}
+THERM_CURRENT_PERIOD_MAP = {"1": "Morning", "2": "Day", "3": "Evening", "4": "Night"}
 
-THERM_CURRENT_CLASS_MAP = {
-    '1': 'In',
-    '2': 'Out',
-    '3': 'Away',
-    '4': 'Other'
-}
+THERM_CURRENT_CLASS_MAP = {"1": "In", "2": "Out", "3": "Away", "4": "Other"}
 
 THERM_ACTIVE_PERIOD_MAP = {
-    '1': 'Morning',
-    '2': 'Day',
-    '3': 'Evening',
-    '4': 'Night',
-    '5': 'Hold',
-    '6': 'Override'
+    "1": "Morning",
+    "2": "Day",
+    "3": "Evening",
+    "4": "Night",
+    "5": "Hold",
+    "6": "Override",
 }
 
-THERM_SENSOR_STATE_MAP = {
-    '0': 'NotPresent',
-    '1': 'Disabled',
-    '2': 'Enabled'
-}
+THERM_SENSOR_STATE_MAP = {"0": "NotPresent", "1": "Disabled", "2": "Enabled"}
 
 FAN_SCHEDULE = "Schedule"
 
 # Preset modes supported by this component
-PRESET_SCHEDULE = "Schedule"        # Restore the normal daily schedule
-PRESET_IN = "In"                    # Switch to 'In' schedule
-PRESET_OUT = "Out"                  # Switch to 'Out' schedule
-PRESET_AWAY = "Away"                # Switch to 'Away' schedule
-PRESET_ECO = "Eco"                  # Switch to 'Eco' mode
-PRESET_MANUAL_TEMP = "Override"     # Override currently scheduled activity until the next schedule change
-PRESET_MANUAL_PERM = "Hold"         # Override the schedule indefinitely
+PRESET_SCHEDULE = "Schedule"  # Restore the normal daily schedule
+PRESET_IN = "In"  # Switch to 'In' schedule
+PRESET_OUT = "Out"  # Switch to 'Out' schedule
+PRESET_AWAY = "Away"  # Switch to 'Away' schedule
+PRESET_ECO = "Eco"  # Switch to 'Eco' mode
+PRESET_MANUAL_TEMP = (
+    "Override"  # Override currently scheduled activity until the next schedule change
+)
+PRESET_MANUAL_PERM = "Hold"  # Override the schedule indefinitely
 
-PRESET_MODES = [PRESET_IN, PRESET_OUT, PRESET_AWAY,
-                PRESET_MANUAL_TEMP, PRESET_MANUAL_PERM]
+PRESET_MODES = [
+    PRESET_IN,
+    PRESET_OUT,
+    PRESET_AWAY,
+    PRESET_MANUAL_TEMP,
+    PRESET_MANUAL_PERM,
+]
 
-PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
-    vol.Required(CONF_HOST): cv.string,
-    vol.Optional(CONF_PORT, default=80): cv.port,
-    vol.Required(CONF_USERNAME): cv.string,
-    vol.Required(CONF_PASSWORD): cv.string,
-})
+PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
+    {
+        vol.Required(CONF_HOST): cv.string,
+        vol.Optional(CONF_PORT, default=80): cv.port,
+        vol.Required(CONF_USERNAME): cv.string,
+        vol.Required(CONF_PASSWORD): cv.string,
+    }
+)
+
 
 def setup_platform(hass, config, add_devices, discovery_info=None):
     """Set up the Proliphix thermostat"""
@@ -165,21 +170,20 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
     add_devices([ProliphixThermostat(hostname, port, username, password)])
 
 
-class ProliphixDevice():
-
+class ProliphixDevice:
     def __init__(self, hostname, port, username, password):
         self._hostname = hostname
         self._port = port
         self._username = username
         self._password = password
 
-    '''
+    """
     Retrieve one or many values from the device.  Argument 'oids' can be any of the following:
     - A single OID string ("4.3.2.1")
     - A list of OID strings (["4.3.2.1", "1.2"])
     - A dict of OID strings, mapped to friendly names ({"4.3.2.1" : "thermSensorTempLocal", "1.2" : "commonDevName"})
-    Return value is a dict of OID mapped to its value.  The OID will be be converted to the friendly name if it was provided. 
-    '''
+    Return value is a dict of OID mapped to its value.  The OID will be be converted to the friendly name if it was provided.
+    """
 
     def get(self, oids):
         valueDict = {}
@@ -197,11 +201,13 @@ class ProliphixDevice():
         url = "http://%s:%s/get" % (self._hostname, str(self._port))
         data = "&".join([("OID" + oid + "=") for oid in oidList])
         try:
-            response = requests.post(url, auth=(self._username, self._password), data=data)
-            for pair in response.text.split('&'):
+            response = requests.post(
+                url, auth=(self._username, self._password), data=data
+            )
+            for pair in response.text.split("&"):
                 if len(pair) == 0:
                     continue
-                oid, value = pair.split('=')
+                oid, value = pair.split("=")
                 oid = oid[3:]  # Strip 'OID' from the key
                 # Remap code to friendly name
                 if remapOIDNames:
@@ -209,15 +215,15 @@ class ProliphixDevice():
                 valueDict[oid] = value
         except requests.exceptions.ConnectionError:
             _LOGGER.error("Unable to connect to {}".format(url))
-        
+
         return valueDict
 
-    '''
+    """
     Set values on the device.  Argument 'oids' can be any of the following:
     - Dict of OIDs mapped to values ({"4.1.1" : "1"})
     - Dict of querystring-style OIDs mapped to values ({"OID4.1.1" : "1"})
     - Dict of friendly names mapped to values ({"thermHvacMode" : "1"})
-    '''
+    """
 
     def set(self, oids):
         valueDict = {}
@@ -349,28 +355,51 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
         self._holdDuration = int(self._data.get("thermHoldDuration", 0))
         self._classPeriodSchedule = {
             "In": {
-                "Morning": self._computeScheduleDateTime(self._data.get("thermPeriodStartInMorning", 0)),
-                "Day": self._computeScheduleDateTime(self._data.get("thermPeriodStartInDay", 0)),
-                "Evening": self._computeScheduleDateTime(self._data.get("thermPeriodStartInEvening", 0)),
-                "Night": self._computeScheduleDateTime(self._data.get("thermPeriodStartInNight", 0))
+                "Morning": self._computeScheduleDateTime(
+                    self._data.get("thermPeriodStartInMorning", 0)
+                ),
+                "Day": self._computeScheduleDateTime(
+                    self._data.get("thermPeriodStartInDay", 0)
+                ),
+                "Evening": self._computeScheduleDateTime(
+                    self._data.get("thermPeriodStartInEvening", 0)
+                ),
+                "Night": self._computeScheduleDateTime(
+                    self._data.get("thermPeriodStartInNight", 0)
+                ),
             },
             "Out": {
-                "Morning": self._computeScheduleDateTime(self._data.get("thermPeriodStartOutMorning", 0)),
-                "Day": self._computeScheduleDateTime(self._data.get("thermPeriodStartOutDay", 0)),
-                "Evening": self._computeScheduleDateTime(self._data.get("thermPeriodStartOutEvening", 0)),
-                "Night": self._computeScheduleDateTime(self._data.get("thermPeriodStartOutNight", 0))
+                "Morning": self._computeScheduleDateTime(
+                    self._data.get("thermPeriodStartOutMorning", 0)
+                ),
+                "Day": self._computeScheduleDateTime(
+                    self._data.get("thermPeriodStartOutDay", 0)
+                ),
+                "Evening": self._computeScheduleDateTime(
+                    self._data.get("thermPeriodStartOutEvening", 0)
+                ),
+                "Night": self._computeScheduleDateTime(
+                    self._data.get("thermPeriodStartOutNight", 0)
+                ),
             },
             "Away": {
-                "Morning": self._computeScheduleDateTime(self._data.get("thermPeriodStartAwayMorning", 0)),
-                "Day": self._computeScheduleDateTime(self._data.get("thermPeriodStartAwayDay", 0)),
-                "Evening": self._computeScheduleDateTime(self._data.get("thermPeriodStartAwayEvening", 0)),
-                "Night": self._computeScheduleDateTime(self._data.get("thermPeriodStartAwayNight", 0))
-            }
+                "Morning": self._computeScheduleDateTime(
+                    self._data.get("thermPeriodStartAwayMorning", 0)
+                ),
+                "Day": self._computeScheduleDateTime(
+                    self._data.get("thermPeriodStartAwayDay", 0)
+                ),
+                "Evening": self._computeScheduleDateTime(
+                    self._data.get("thermPeriodStartAwayEvening", 0)
+                ),
+                "Night": self._computeScheduleDateTime(
+                    self._data.get("thermPeriodStartAwayNight", 0)
+                ),
+            },
         }
         self._nextPeriod, self._nextPeriodStart = self._getNextPeriodSchedule()
         self._holdUntil = self._getHoldUntil()
         self._scheduleSummary = self._getScheduleSummary()
-
 
         # Compute current preset based on setback status and current class
         # Normal
@@ -417,17 +446,21 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
             "hold_hours": self._holdDuration,
             "fan_state": THERM_FAN_STATE_MAP.get(self._fanMode),
             "setback_status": THERM_SETBACK_STATUS_MAP.get(self._setbackStatus),
-            "next_period" : self._nextPeriod,
-            "next_period_start" : self._nextPeriodStart,
+            "next_period": self._nextPeriod,
+            "next_period_start": self._nextPeriodStart,
             "hold_until": self._holdUntil,
-            "schedule_summary": self._scheduleSummary
+            "schedule_summary": self._scheduleSummary,
         }
         if self._model in ["NT150", "NT160"]:
             custom_attributes["humidity"] = self._relativeHumidity
         if self._model not in ["NT10"]:
-            custom_attributes["remote_sensor_state"] = THERM_SENSOR_STATE_MAP.get(self._remoteSensorState)
+            custom_attributes["remote_sensor_state"] = THERM_SENSOR_STATE_MAP.get(
+                self._remoteSensorState
+            )
             if THERM_SENSOR_STATE_MAP.get(self._remoteSensorState) == "Enabled":
-                custom_attributes["remote_sensor_temperature"] = float(self._remoteSensorTemperature) / 10
+                custom_attributes["remote_sensor_temperature"] = (
+                    float(self._remoteSensorTemperature) / 10
+                )
         attributes = {}
         attributes.update(default_attributes)
         attributes.update(custom_attributes)
@@ -457,13 +490,13 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
         Need to be one of HVAC_MODE_*.
         """
         # TODO: Re-enable Fan mode
-        if self._hvacMode == '2':
+        if self._hvacMode == "2":
             return HVAC_MODE_HEAT
-        elif self._hvacMode == '3':
+        elif self._hvacMode == "3":
             return HVAC_MODE_COOL
-        elif self._hvacMode == '4':
+        elif self._hvacMode == "4":
             return HVAC_MODE_HEAT_COOL
-        elif self._hvacMode == '1':
+        elif self._hvacMode == "1":
             return HVAC_MODE_OFF
         else:
             return HVAC_MODE_OFF
@@ -484,11 +517,11 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
         # TODO: Add logic for fan
         if self.hvac_mode == HVAC_MODE_OFF:
             return CURRENT_HVAC_OFF
-        elif self._hvacState in ['1', '2', '8', '9']:
+        elif self._hvacState in ["1", "2", "8", "9"]:
             return CURRENT_HVAC_IDLE
-        elif self._hvacState in ['3', '4', '5']:
+        elif self._hvacState in ["3", "4", "5"]:
             return CURRENT_HVAC_HEAT
-        elif self._hvacState in ['6', '7']:
+        elif self._hvacState in ["6", "7"]:
             return CURRENT_HVAC_COOL
         else:
             return CURRENT_HVAC_IDLE
@@ -563,7 +596,6 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
         elif self._fanMode == "3":
             return FAN_SCHEDULE
 
-
     @property
     def fan_modes(self):
         """Return the list of available fan modes.
@@ -598,7 +630,7 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
         else:
             return
         # Enable a temporary override at the selected temperature
-        self._device.set({targetSetback: targetTemp, "thermSetbackStatus": '2'})
+        self._device.set({targetSetback: targetTemp, "thermSetbackStatus": "2"})
 
     def set_humidity(self, humidity):
         """Set new target humidity."""
@@ -631,20 +663,47 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
         # Set the normal weekly schedule to In/Out/Away based on preset
         if preset_mode == PRESET_IN:
             self._device.set(
-                {"4.1.9": "1", "4.4.3.2.1": "1", "4.4.3.2.2": "1", "4.4.3.2.3": "1", "4.4.3.2.4": "1",
-                 "4.4.3.2.5": "1", "4.4.3.2.6": "1", "4.4.3.2.7": "1"})
+                {
+                    "4.1.9": "1",
+                    "4.4.3.2.1": "1",
+                    "4.4.3.2.2": "1",
+                    "4.4.3.2.3": "1",
+                    "4.4.3.2.4": "1",
+                    "4.4.3.2.5": "1",
+                    "4.4.3.2.6": "1",
+                    "4.4.3.2.7": "1",
+                }
+            )
         elif preset_mode == PRESET_OUT:
             self._device.set(
-                {"4.1.9": "1", "4.4.3.2.1": "2", "4.4.3.2.2": "2", "4.4.3.2.3": "2", "4.4.3.2.4": "2",
-                 "4.4.3.2.5": "2", "4.4.3.2.6": "2", "4.4.3.2.7": "2"})
+                {
+                    "4.1.9": "1",
+                    "4.4.3.2.1": "2",
+                    "4.4.3.2.2": "2",
+                    "4.4.3.2.3": "2",
+                    "4.4.3.2.4": "2",
+                    "4.4.3.2.5": "2",
+                    "4.4.3.2.6": "2",
+                    "4.4.3.2.7": "2",
+                }
+            )
         elif preset_mode == PRESET_AWAY:
             self._device.set(
-                {"4.1.9": "1", "4.4.3.2.1": "3", "4.4.3.2.2": "3", "4.4.3.2.3": "3", "4.4.3.2.4": "3",
-                 "4.4.3.2.5": "3", "4.4.3.2.6": "3", "4.4.3.2.7": "3"})
+                {
+                    "4.1.9": "1",
+                    "4.4.3.2.1": "3",
+                    "4.4.3.2.2": "3",
+                    "4.4.3.2.3": "3",
+                    "4.4.3.2.4": "3",
+                    "4.4.3.2.5": "3",
+                    "4.4.3.2.6": "3",
+                    "4.4.3.2.7": "3",
+                }
+            )
         elif preset_mode == PRESET_MANUAL_TEMP:
-            self._set_hold_mode('Override')
+            self._set_hold_mode("Override")
         elif preset_mode == PRESET_MANUAL_PERM:
-            self._set_hold_mode('Hold')
+            self._set_hold_mode("Hold")
         elif preset_mode == PRESET_ECO:
             self._turnOnEcoMode()
         else:
@@ -662,7 +721,7 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
     @property
     def supported_features(self):
         """Return the list of supported features."""
-        baseline_features = (SUPPORT_FAN_MODE | SUPPORT_PRESET_MODE)
+        baseline_features = SUPPORT_FAN_MODE | SUPPORT_PRESET_MODE
         if self.hvac_mode == HVAC_MODE_HEAT_COOL:
             return baseline_features | SUPPORT_TARGET_TEMPERATURE_RANGE
         elif self.hvac_mode in [HVAC_MODE_HEAT, HVAC_MODE_COOL]:
@@ -693,17 +752,33 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
     def _turn_away_mode_on(self):
         """Turn away mode on by setting the default weekly schedule for each day to OUT."""
         self._device.set(
-            {"4.4.3.2.1": "2", "4.4.3.2.2": "2", "4.4.3.2.3": "2", "4.4.3.2.4": "2", "4.4.3.2.5": "2", "4.4.3.2.6": "2",
-             "4.4.3.2.7": "2"})
-        time.sleep(1)   # Allow time for change to process, then force update
+            {
+                "4.4.3.2.1": "2",
+                "4.4.3.2.2": "2",
+                "4.4.3.2.3": "2",
+                "4.4.3.2.4": "2",
+                "4.4.3.2.5": "2",
+                "4.4.3.2.6": "2",
+                "4.4.3.2.7": "2",
+            }
+        )
+        time.sleep(1)  # Allow time for change to process, then force update
         self.update()
 
     def _turn_away_mode_off(self):
         """Turn away mode off by setting the default weekly schedule for each day to IN."""
         self._device.set(
-            {"4.4.3.2.1": "1", "4.4.3.2.2": "1", "4.4.3.2.3": "1", "4.4.3.2.4": "1", "4.4.3.2.5": "1", "4.4.3.2.6": "1",
-             "4.4.3.2.7": "1"})
-        time.sleep(1)   # Allow time for change to process, then force update
+            {
+                "4.4.3.2.1": "1",
+                "4.4.3.2.2": "1",
+                "4.4.3.2.3": "1",
+                "4.4.3.2.4": "1",
+                "4.4.3.2.5": "1",
+                "4.4.3.2.6": "1",
+                "4.4.3.2.7": "1",
+            }
+        )
+        time.sleep(1)  # Allow time for change to process, then force update
         self.update()
 
     def _set_hold_mode(self, hold):
@@ -711,14 +786,16 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
         # TODO: this can be enhanced
         for value, label in THERM_SETBACK_STATUS_MAP.items():
             if label == hold:
-                self._device.set({"thermSetbackStatus": value, "thermHoldDuration": "0"})
+                self._device.set(
+                    {"thermSetbackStatus": value, "thermHoldDuration": "0"}
+                )
 
     def _restore_last_state(self, restoredState):
-        '''
+        """
         Use this to restore custom computed attributes, such as holdUntil, scheduleSummary
         :param restoredState:
         :return:
-        '''
+        """
         if not restoredState:
             return
 
@@ -728,20 +805,27 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
         if minsAfterMidnight is None:
             minsAfterMidnight = 0
         minsAfterMidnight = int(minsAfterMidnight)
-        result = datetime.datetime.today().replace(hour=0, minute=0, second=0, microsecond=0) + datetime.timedelta(
-            minutes=minsAfterMidnight)
+        result = datetime.datetime.today().replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ) + datetime.timedelta(minutes=minsAfterMidnight)
         # If the time is in the past, result should be same time tomorrow
         if result < datetime.datetime.now():
-            result = datetime.datetime.today().replace(hour=0, minute=0, second=0, microsecond=0) + datetime.timedelta(
-                days=1, minutes=minsAfterMidnight)
+            result = datetime.datetime.today().replace(
+                hour=0, minute=0, second=0, microsecond=0
+            ) + datetime.timedelta(days=1, minutes=minsAfterMidnight)
         return result
 
     def _getNextPeriodSchedule(self):
         currentClass = THERM_CURRENT_CLASS_MAP.get(self._currentClass, 1)
         nextPeriod = "Unknown"
         nextPeriodStart = datetime.datetime.max
-        for period, startDateTime in self._classPeriodSchedule.get(currentClass, {}).items():
-            if startDateTime >= datetime.datetime.now() and startDateTime <= nextPeriodStart:
+        for period, startDateTime in self._classPeriodSchedule.get(
+            currentClass, {}
+        ).items():
+            if (
+                startDateTime >= datetime.datetime.now()
+                and startDateTime <= nextPeriodStart
+            ):
                 nextPeriod = period
                 nextPeriodStart = startDateTime
         return (nextPeriod, nextPeriodStart)
@@ -755,41 +839,59 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
             now -= time.altzone
         else:
             now -= time.timezone
-        drift = now - int(self._data.get('systemTimeSecs', now))
+        drift = now - int(self._data.get("systemTimeSecs", now))
 
         if drift > 60:
-            _LOGGER.warning("{} {} time drifted by {} seconds, resetting".format(self._siteName, self._deviceName, drift))
+            _LOGGER.warning(
+                "{} {} time drifted by {} seconds, resetting".format(
+                    self._siteName, self._deviceName, drift
+                )
+            )
             self._device.set({"systemTimeSecs": set_now})
 
     def _setHoldDuration(self, hours):
         currentHoldDuration = int(self._holdDuration)
         if hours != currentHoldDuration:
             self._device.set({"thermHoldDuration": int(hours)})
-            strCurrent = "indefinite" if currentHoldDuration == 0 else "{} hours".format(currentHoldDuration)
+            strCurrent = (
+                "indefinite"
+                if currentHoldDuration == 0
+                else "{} hours".format(currentHoldDuration)
+            )
             strNew = "indefinite" if hours == 0 else "{} hours".format(hours)
-            _LOGGER.info("{} {} hold duration changed from {} to {}".format(self._siteName, self._deviceName, strCurrent, strNew))
+            _LOGGER.info(
+                "{} {} hold duration changed from {} to {}".format(
+                    self._siteName, self._deviceName, strCurrent, strNew
+                )
+            )
 
     def _getScheduleSummary(self):
         summary = ""
         setbackStatusLabel = THERM_SETBACK_STATUS_MAP.get(self._setbackStatus, "")
 
-        if self._hvacMode == '1':   # Off
+        if self._hvacMode == "1":  # Off
             return "Off"
-        #elif self._isEcoModeOn():
+        # elif self._isEcoModeOn():
         #    summary = "Eco mode"
         elif setbackStatusLabel == "Normal":
-            summary = "{} - {} until {}".format(THERM_CURRENT_CLASS_MAP.get(self._currentClass),
-                                                                   THERM_CURRENT_PERIOD_MAP.get(self._currentPeriod),
-                                                                   self._relativeDateTime(self._getNextPeriodSchedule()[1]))
+            summary = "{} - {} until {}".format(
+                THERM_CURRENT_CLASS_MAP.get(self._currentClass),
+                THERM_CURRENT_PERIOD_MAP.get(self._currentPeriod),
+                self._relativeDateTime(self._getNextPeriodSchedule()[1]),
+            )
         elif setbackStatusLabel == "Hold":
             if int(self._holdDuration) == 0:
                 summary = "Hold indefinitely"
             else:
-                summary = "Hold until {}".format(self._relativeDateTime(self._holdUntil))
+                summary = "Hold until {}".format(
+                    self._relativeDateTime(self._holdUntil)
+                )
         elif setbackStatusLabel == "Override":
-            summary = "Override {} - {} until {}".format(THERM_CURRENT_CLASS_MAP.get(self._currentClass),
-                                                         THERM_CURRENT_PERIOD_MAP.get(self._currentPeriod),
-                                                         self._relativeDateTime(self._getNextPeriodSchedule()[1]))
+            summary = "Override {} - {} until {}".format(
+                THERM_CURRENT_CLASS_MAP.get(self._currentClass),
+                THERM_CURRENT_PERIOD_MAP.get(self._currentPeriod),
+                self._relativeDateTime(self._getNextPeriodSchedule()[1]),
+            )
         return summary
 
     def _relativeDateTime(self, dt):
@@ -799,7 +901,7 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
         if dt.date() == datetime.date.today():
             dayString = ""
         elif dt.date() == datetime.date.today() + datetime.timedelta(days=1):
-            dayString ="tomorrow"
+            dayString = "tomorrow"
         elif dt.date() == datetime.date.today() + datetime.timedelta(days=-1):
             dayString = "yesterday"
         else:
@@ -811,35 +913,46 @@ class ProliphixThermostat(ClimateDevice, RestoreEntity):
             else:
                 dayString = dt.strftime("%b %d")
         if len(dayString) > 0:
-            result = "{}, {}".format(dayString, dt.strftime("%I:%M%p").lstrip('0'))
+            result = "{}, {}".format(dayString, dt.strftime("%I:%M%p").lstrip("0"))
         else:
-            result = "{}".format(dt.strftime("%I:%M%p").lstrip('0'))
+            result = "{}".format(dt.strftime("%I:%M%p").lstrip("0"))
         return result.capitalize()
 
     def _getHoldUntil(self):
         holdUntil = None
         if THERM_SETBACK_STATUS_MAP.get(self._data.get("thermSetbackStatus")) == "Hold":
             # If hold was just enabled, compute a new 'until' datetime
-            if self._data.get("thermSetbackStatus") != self._previousData.get("thermSetbackStatus"):
+            if self._data.get("thermSetbackStatus") != self._previousData.get(
+                "thermSetbackStatus"
+            ):
                 if int(self._holdDuration) == 0:
                     holdUntil = "indefinitely"
                 else:
-                    holdUntil = datetime.datetime.now() + datetime.timedelta(hours=int(self._holdDuration))
+                    holdUntil = datetime.datetime.now() + datetime.timedelta(
+                        hours=int(self._holdDuration)
+                    )
         else:
             holdUntil = None
         return holdUntil
 
     def _isEcoModeOn(self):
         if self._configEcoModeEnabled:
-            if int(self._setbackHeat)/10 == self._configEcoModeTemperature and \
-            THERM_SETBACK_STATUS_MAP.get(self._setbackStatus, "") == "Hold" and \
-            self._holdDuration == 0:
+            if (
+                int(self._setbackHeat) / 10 == self._configEcoModeTemperature
+                and THERM_SETBACK_STATUS_MAP.get(self._setbackStatus, "") == "Hold"
+                and self._holdDuration == 0
+            ):
                 return True
         else:
             return False
 
     def _turnOnEcoMode(self):
         # Heat with indefinite hold at eco temperature
-        self._device.set({"thermHvacMode": "2", "thermHoldDuration": "0",
-                          "thermSetbackStatus": "2",
-                          "thermSetbackHeat": str(self._configEcoModeTemperature * 10)})
+        self._device.set(
+            {
+                "thermHvacMode": "2",
+                "thermHoldDuration": "0",
+                "thermSetbackStatus": "2",
+                "thermSetbackHeat": str(self._configEcoModeTemperature * 10),
+            }
+        )

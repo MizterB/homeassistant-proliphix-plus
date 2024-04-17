@@ -1,9 +1,14 @@
 {
   "domain": "proliphix_plus",
   "name": "Proliphix Plus",
-  "documentation": "https://github.com/MizterB/homeassistant-proliphix-plus",
-  "requirements": [],
-  "dependencies": [],
   "codeowners": ["@MizterB"],
-  "version": "2024.4"
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/MizterB/homeassistant-proliphix-plus",
+  "homekit": {},
+  "iot_class": "local_polling",
+  "requirements": [],
+  "ssdp": [],
+  "zeroconf": [],
+  "version": "2024.4.0"
 }
