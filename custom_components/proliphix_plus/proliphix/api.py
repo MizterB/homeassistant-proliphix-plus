@@ -495,3 +495,12 @@ class Proliphix:
                 next_period_start = start
         self._next_period = next_period
         self._next_period_start = next_period_start
+
+    async def set_temperature(self, heat: float, cool: float) -> None:
+        """Set the target heating and cooling temperatures."""
+        temps = {}
+        if heat:
+            temps[OID.THERM_SETBACK_HEAT] = str(int(heat * 10))
+        if cool:
+            temps[OID.THERM_SETBACK_COOL] = str(int(cool * 10))
+        await self.set_oids(temps)
