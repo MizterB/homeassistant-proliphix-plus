@@ -83,6 +83,7 @@ class ProliphixDataUpdateCoordinator(DataUpdateCoordinator):
         """Fetch data from Proliphix."""
         try:
             await self.proliphix.refresh_state()
+            await self.proliphix.refresh_schedule()
         except TimeoutError as err:
             raise UpdateFailed(f"Timeout while communicating with API: {err}") from err
 
