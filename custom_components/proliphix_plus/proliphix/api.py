@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from enum import Enum
 import logging
 from urllib.parse import parse_qs, urlencode
 
@@ -197,7 +198,15 @@ class Proliphix:
 
     async def set_oids(self, oid_values: dict[OID, str]) -> dict[OID, str]:
         """Set the values of OIDs."""
-        data = urlencode({k.value: v for k, v in oid_values.items()}) + "&submit=Submit"
+        data = (
+            urlencode(
+                {
+                    k.value: v.value if isinstance(v, Enum) else v
+                    for k, v in oid_values.items()
+                }
+            )
+            + "&submit=Submit"
+        )
         resp = await self._post("/pdp", data=data)
         resp = self._process_response(resp)
         self._update_cache(resp)
@@ -340,6 +349,10 @@ class Proliphix:
             return None
         return next((m for m in HVACMode if m.value == val), None)
 
+    async def set_hvac_mode(self, mode: HVACMode) -> None:
+        """Set the HVAC mode of the thermostat."""
+        await self.set_oids({OID.THERM_HVAC_MODE: mode.value})
+
     @property
     def hvac_state(self) -> HVACState | None:
         """HVAC state of the thermostat."""
@@ -355,6 +368,10 @@ class Proliphix:
         if not val:
             return None
         return next((m for m in FanMode if m.value == val), None)
+
+    async def set_fan_mode(self, mode: FanMode) -> None:
+        """Set the fan mode of the thermostat."""
+        await self.set_oids({OID.THERM_FAN_MODE: mode.value})
 
     @property
     def fan_state(self) -> FanState | None:
@@ -372,6 +389,10 @@ class Proliphix:
             return None
         return float(val) / 10
 
+    async def set_setback_heat(self, temperature: float) -> None:
+        """Set the target heating temperature."""
+        await self.set_oids({OID.THERM_SETBACK_HEAT: int(temperature * 10)})
+
     @property
     def setback_cool(self) -> float | None:
         """Target cooling temperature."""
@@ -379,6 +400,10 @@ class Proliphix:
         if not val:
             return None
         return float(val) / 10
+
+    async def set_setback_cool(self, temperature: float) -> None:
+        """Set the target cooling temperature."""
+        await self.set_oids({OID.THERM_SETBACK_COOL: int(temperature * 10)})
 
     @property
     def setback_status(self) -> SetbackStatus | None:
@@ -495,12 +520,3 @@ class Proliphix:
                 next_period_start = start
         self._next_period = next_period
         self._next_period_start = next_period_start
-
-    async def set_temperature(self, heat: float, cool: float) -> None:
-        """Set the target heating and cooling temperatures."""
-        temps = {}
-        if heat:
-            temps[OID.THERM_SETBACK_HEAT] = str(int(heat * 10))
-        if cool:
-            temps[OID.THERM_SETBACK_COOL] = str(int(cool * 10))
-        await self.set_oids(temps)

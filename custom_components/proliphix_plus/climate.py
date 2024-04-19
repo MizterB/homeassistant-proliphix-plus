@@ -1,5 +1,6 @@
 """Climate for Proliphix."""
 
+import asyncio
 import logging
 
 from homeassistant.components.climate import (
@@ -26,7 +27,7 @@ from .const import (
     PRESET_OVERRIDE,
 )
 from .proliphix.const import (
-    # Activity as PlxActivity,
+    OID,
     FanMode as PlxFanMode,
     HVACMode as PlxHVACMode,
     HVACState as PlxHVACState,
@@ -129,20 +130,18 @@ class ProliphixClimate(ProliphixEntity, ClimateEntity):
 
     async def async_set_temperature(self, **kwargs):
         """Set new target temperature."""
-        raise NotImplementedError
-        # if self.proliphix.hvac_mode == PlxHVACMode.HEAT:
-        #     temperature = kwargs.get("temperature")
-        #     if temperature is not None:
-        #         await self.proliphix.set_temperature(heat=temperature)
-        # if "temperature" in kwargs:
-        #     temperature = kwargs["temperature"]
-        #     await self.proliphix.set_temperature(temperature=temperature)
-        # elif "target_temp_low" in kwargs and "target_temp_high" in kwargs:
-        #     temperature_heat = kwargs["target_temp_low"]
-        #     temperature_cool = kwargs["target_temp_high"]
-        #     await self.proliphix.set_temperature(
-        #         temperature_heat=temperature_heat, temperature_cool=temperature_cool
-        #     )
+        _LOGGER.debug("Set temperature: %s", kwargs)
+        if "temperature" in kwargs:
+            if self.proliphix.hvac_mode == PlxHVACMode.HEAT:
+                await self.proliphix.set_setback_heat(kwargs["temperature"])
+            elif self.proliphix.hvac_mode == PlxHVACMode.COOL:
+                await self.proliphix.set_setback_cool(kwargs["temperature"])
+        elif "target_temp_low" in kwargs:
+            await self.proliphix.set_setback_heat(kwargs["target_temp_low"])
+        elif "target_temp_high" in kwargs:
+            await self.proliphix.set_setback_cool(kwargs["target_temp_high"])
+        await asyncio.sleep(1)
+        await self.coordinator.async_refresh()
 
     @property
     def current_humidity(self) -> float:
@@ -182,7 +181,6 @@ class ProliphixClimate(ProliphixEntity, ClimateEntity):
             HVACMode.HEAT,
             HVACMode.COOL,
             HVACMode.HEAT_COOL,
-            HVACMode.FAN_ONLY,
         ]
 
     @property
@@ -197,21 +195,20 @@ class ProliphixClimate(ProliphixEntity, ClimateEntity):
         return mode_map.get(self.proliphix.hvac_mode, HVACMode.OFF)
 
     async def async_set_hvac_mode(self, hvac_mode):
-        """Set new target hvac mode."""
-        raise NotImplementedError
-        # _LOGGER.debug("Set hvac mode: %s", hvac_mode)
-        # mode_map = {
-        #     HVACMode.OFF: InfHVACMode.OFF,
-        #     HVACMode.HEAT: InfHVACMode.HEAT,
-        #     HVACMode.COOL: InfHVACMode.COOL,
-        #     HVACMode.HEAT_COOL: InfHVACMode.AUTO,
-        #     HVACMode.FAN_ONLY: InfHVACMode.FAN_ONLY,
-        # }
-        # mode = mode_map.get(hvac_mode)
-        # if mode is None:
-        #     _LOGGER.error("Invalid hvac mode: %s", hvac_mode)
-        # else:
-        #     await self.proliphix.system.set_hvac_mode(mode)
+        """Set new target HVAC mode."""
+        _LOGGER.debug("Set hvac mode: %s", hvac_mode)
+        mode_map = {
+            HVACMode.OFF: PlxHVACMode.OFF,
+            HVACMode.HEAT: PlxHVACMode.HEAT,
+            HVACMode.COOL: PlxHVACMode.COOL,
+            HVACMode.HEAT_COOL: PlxHVACMode.AUTO,
+        }
+        mode = mode_map.get(hvac_mode)
+        if mode is None:
+            _LOGGER.error("Invalid hvac mode: %s", hvac_mode)
+        else:
+            await self.proliphix.set_hvac_mode(mode)
+            await self.coordinator.async_refresh()
 
     @property
     def fan_modes(self):
@@ -230,19 +227,18 @@ class ProliphixClimate(ProliphixEntity, ClimateEntity):
 
     async def async_set_fan_mode(self, fan_mode):
         """Set new target fan mode."""
-        raise NotImplementedError
-        # _LOGGER.debug("Set fan mode: %s", fan_mode)
-        # mode_map = {
-        #     FAN_AUTO: InfFanMode.AUTO,
-        #     FAN_HIGH: InfFanMode.HIGH,
-        #     FAN_MEDIUM: InfFanMode.MEDIUM,
-        #     FAN_LOW: InfFanMode.LOW,
-        # }
-        # mode = mode_map.get(fan_mode)
-        # if mode is None:
-        #     _LOGGER.error("Invalid fan mode: %s", fan_mode)
-        # else:
-        #     await self.proliphix.set_fan_mode(mode)
+        _LOGGER.debug("Set fan mode: %s", fan_mode)
+        mode_map = {
+            FAN_AUTO: PlxFanMode.AUTO,
+            FAN_ON: PlxFanMode.ON,
+            FAN_SCHEDULE: PlxFanMode.SCHEDULE,
+        }
+        mode = mode_map.get(fan_mode)
+        if mode is None:
+            _LOGGER.error("Invalid fan mode: %s", fan_mode)
+        else:
+            await self.proliphix.set_fan_mode(mode)
+            await self.coordinator.async_refresh()
 
     @property
     def preset_modes(self) -> list:
@@ -274,53 +270,37 @@ class ProliphixClimate(ProliphixEntity, ClimateEntity):
 
     async def async_set_preset_mode(self, preset_mode):
         """Set new target preset mode."""
-        raise NotImplementedError
-        # _LOGGER.debug("Set preset mode: %s", preset_mode)
-        # if preset_mode == PRESET_SCHEDULE:
-        #     # Remove all holds to restore the normal schedule
-        #     await self.proliphix.set_hold_mode(mode=InfHoldMode.OFF)
-        # elif preset_mode == PRESET_HOME:
-        #     # Set to home until the next scheduled activity
-        #     await self.proliphix.set_hold_mode(
-        #         mode=InfHoldMode.UNTIL, activity=InfActivity.HOME
-        #     )
-        # elif preset_mode == PRESET_AWAY:
-        #     # Set to away until the next scheduled activity
-        #     await self.proliphix.set_hold_mode(
-        #         mode=InfHoldMode.UNTIL, activity=InfActivity.AWAY
-        #     )
-        # elif preset_mode == PRESET_SLEEP:
-        #     # Set to sleep until the next scheduled activity
-        #     await self.proliphix.set_hold_mode(
-        #         mode=InfHoldMode.UNTIL, activity=InfActivity.SLEEP
-        #     )
-        # elif preset_mode == PRESET_WAKE:
-        #     # Set to wake until the next scheduled activity
-        #     await self.proliphix.set_hold_mode(
-        #         mode=InfHoldMode.UNTIL, activity=InfActivity.WAKE
-        #     )
-        # elif preset_mode == PRESET_HOLD:
-        #     # Set to manual and hold indefinitely
-        #     await self.proliphix.set_hold_mode(
-        #         mode=InfHoldMode.INDEFINITE, activity=InfActivity.MANUAL
-        #     )
-        # elif preset_mode == PRESET_HOLD_UNTIL:
-        #     # Set to manual and hold indefinitely
-        #     await self.proliphix.set_hold_mode(
-        #         mode=InfHoldMode.UNTIL, activity=InfActivity.MANUAL
-        #     )
-        # else:
-        #     _LOGGER.error("Invalid preset mode: %s", preset_mode)
+        _LOGGER.debug("Set preset mode: %s", preset_mode)
+        if preset_mode in [PRESET_IN, PRESET_OUT, PRESET_AWAY]:
+            schedule_class = getattr(PlxScheduleClass, preset_mode.upper())
+            settings = {
+                OID.THERM_SETBACK_STATUS: PlxSetBackStatus.NORMAL,
+                OID.THERM_DEFAULT_CLASS_ID_SUNDAY: schedule_class,
+                OID.THERM_DEFAULT_CLASS_ID_MONDAY: schedule_class,
+                OID.THERM_DEFAULT_CLASS_ID_TUESDAY: schedule_class,
+                OID.THERM_DEFAULT_CLASS_ID_WEDNESDAY: schedule_class,
+                OID.THERM_DEFAULT_CLASS_ID_THURSDAY: schedule_class,
+                OID.THERM_DEFAULT_CLASS_ID_FRIDAY: schedule_class,
+                OID.THERM_DEFAULT_CLASS_ID_SATURDAY: schedule_class,
+            }
+        elif preset_mode == PRESET_HOLD:
+            settings = {
+                OID.THERM_SETBACK_STATUS: PlxSetBackStatus.HOLD,
+                OID.THERM_HOLD_DURATION: 0,
+            }
+        elif preset_mode == PRESET_OVERRIDE:
+            settings = {
+                OID.THERM_SETBACK_STATUS: PlxSetBackStatus.OVERRIDE,
+                OID.THERM_HOLD_DURATION: 0,
+            }
+        else:
+            _LOGGER.error("Invalid preset mode: %s", preset_mode)
+            return
 
-    async def async_set_hold_mode(self, mode, activity, until):
-        """Set the hold mode."""
-        raise NotImplementedError
-        # hold_mode = next((m for m in InfHoldMode if m.value == mode), None)
-        # hold_activity = next((a for a in InfActivity if a.value == activity), None)
-        # today = self.system.local_time.replace(
-        #     hour=0, minute=0, second=0, microsecond=0
-        # )
-        # hold_until = today + timedelta(seconds=until)
-        # await self.proliphix.set_hold_mode(
-        #     mode=hold_mode, activity=hold_activity, until=hold_until
-        # )
+        await self.proliphix.set_oids(settings)
+        # The set operation will update more than just the settings above,
+        # so force a refresh of the entire thermostat status.  Based on testing,
+        # it takes at least 6 seconds of wait time until the thermostat can
+        # return the updated status.
+        await asyncio.sleep(6)
+        await self.coordinator.async_refresh()
