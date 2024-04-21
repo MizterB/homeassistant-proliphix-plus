@@ -162,6 +162,10 @@ class Proliphix:
     def _process_response(self, response: dict) -> dict[OID, str]:
         """Map a get/set response back to OIDs."""
         resp = {}
+        if response is None:
+            # Change this level if useful
+            _LOGGER.debug("No response from thermostat")
+            return resp
         for oid_str, value in response.items():
             oid_obj = OID.get_by_val(oid_str)
             resp[oid_obj] = value[0] if value else ""
