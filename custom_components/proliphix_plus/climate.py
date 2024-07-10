@@ -73,10 +73,9 @@ class ProliphixClimate(ProliphixEntity, ClimateEntity):
     def supported_features(self):
         """Return the supported features."""
         features = ClimateEntityFeature.FAN_MODE | ClimateEntityFeature.PRESET_MODE
-        if self.proliphix.hvac_mode == PlxHVACMode.AUTO:
-            features = features | ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
-        elif self.proliphix.hvac_mode in [PlxHVACMode.HEAT, PlxHVACMode.COOL]:
-            features = features | ClimateEntityFeature.TARGET_TEMPERATURE
+        features = features | ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
+        features = features | ClimateEntityFeature.TARGET_TEMPERATURE
+
         return features
 
     @property
@@ -99,34 +98,37 @@ class ProliphixClimate(ProliphixEntity, ClimateEntity):
     @property
     def target_temperature(self) -> float:
         """Return the target temperature."""
-        target = self.proliphix.temperature_local
         if self.proliphix.hvac_mode == PlxHVACMode.AUTO:
             if self.proliphix.hvac_state in [
                 PlxHVACState.HEAT,
                 PlxHVACState.HEAT_2,
                 PlxHVACState.HEAT_3,
             ]:
-                target = self.proliphix.setback_heat
+                return self.proliphix.setback_heat
             elif self.proliphix.hvac_state in [PlxHVACState.COOL, PlxHVACState.COOL_2]:
-                target = self.proliphix.setback_cool
-
-        if self.proliphix.hvac_mode == PlxHVACMode.HEAT:
-            target = self.proliphix.setback_heat
-
-        if self.proliphix.hvac_mode == PlxHVACMode.COOL:
-            target = self.proliphix.setback_cool
-
-        return target
+                return self.proliphix.setback_cool
+        elif self.proliphix.hvac_mode == PlxHVACMode.HEAT:
+            return self.proliphix.setback_heat
+        elif self.proliphix.hvac_mode == PlxHVACMode.COOL:
+            return self.proliphix.setback_cool
+        else:
+            return None
 
     @property
     def target_temperature_high(self) -> float:
         """Return the high target temperature."""
-        return self.proliphix.setback_cool
+        if self.proliphix.hvac_mode == PlxHVACMode.AUTO:
+            return self.proliphix.setback_cool
+        else:
+            return None
 
     @property
     def target_temperature_low(self) -> float:
         """Return the low target temperature."""
-        return self.proliphix.setback_heat
+        if self.proliphix.hvac_mode == PlxHVACMode.AUTO:
+            return self.proliphix.setback_heat
+        else:
+            return None
 
     async def async_set_temperature(self, **kwargs):
         """Set new target temperature."""
