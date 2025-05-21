@@ -1,6 +1,7 @@
 """Define a base client for interacting with a Proliphix thermostat."""
 
 import asyncio
+import base64
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 import logging
@@ -131,14 +132,21 @@ class Proliphix:
             protocol = "https"
         return f"{protocol}://{self.host}:{self.port}"
 
+    def _get_auth_header(self):
+        creds = f"{self.username}:{self.password}".encode()
+        return {"Authorization": "Basic " + base64.b64encode(creds).decode()}
+
     async def _post(self, endpoint: str, data: dict, **kwargs) -> dict:
         """Make a POST request to the thermostat."""
         url = f"{self.url}{endpoint}"
+        headers = self._get_auth_header()
+        if "headers" in kwargs:
+            kwargs["headers"].update(headers)
+        else:
+            kwargs["headers"] = headers
         try:
             _LOGGER.debug("POST %s with %s and %s", url, data, kwargs)
-            async with self._session.post(
-                url, data=data, auth=self._auth, **kwargs
-            ) as resp:
+            async with self._session.post(url, data=data, **kwargs) as resp:
                 resp_text = await resp.text()
                 resp_dict = parse_qs(resp_text)
                 _LOGGER.debug(
