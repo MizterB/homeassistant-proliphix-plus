@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 
@@ -15,13 +15,14 @@ from homeassistant.const import (
     CONF_SSL,
     CONF_USERNAME,
 )
-from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResult
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import DOMAIN
 from .proliphix.api import Proliphix
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+    from homeassistant.data_entry_flow import FlowResult
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ CONNECTION_SCHEMA = vol.Schema(
 )
 
 
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
+async def validate_input(hass: "HomeAssistant", data: dict[str, Any]) -> dict[str, str]:
     """Validate the user input allows us to connect.
 
     Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
@@ -53,11 +54,17 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
     try:
         await proliphix.connect()
     except ConnectionError as connection_error:
-        _LOGGER.error("Error connecting to Proliphix: %s", connection_error)
-        raise CannotConnect from connection_error
+        _LOGGER.exception("Error connecting to Proliphix: %s", connection_error)
+        raise CannotConnectError from connection_error
 
-    config_entry_name = f"{proliphix.site_name}: " if proliphix.site_name else ""
-    config_entry_name += proliphix.name if proliphix.name else proliphix.serial_number
+    config_entry_name = (
+        f"{getattr(proliphix, 'site_name', '')}: "
+        if getattr(proliphix, "site_name", None)
+        else ""
+    )
+    config_entry_name += getattr(proliphix, "name", None) or getattr(
+        proliphix, "serial_number", "Unknown"
+    )
     return {"config_entry_name": config_entry_name}
 
 
@@ -68,7 +75,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> "FlowResult":
         """Handle the initial step."""
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -77,24 +84,25 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._abort_if_unique_id_configured()
             try:
                 info = await validate_input(self.hass, user_input)
-            except CannotConnect:
+            except CannotConnectError:
                 errors["base"] = "cannot_connect"
             except Exception:  # pylint: disable=broad-except
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
             else:
-                return self.async_create_entry(
-                    title=info["config_entry_name"], data=user_input
-                )
+                if info is not None and "config_entry_name" in info:
+                    return self.async_create_entry(
+                        title=info["config_entry_name"], data=user_input
+                    )
 
         return self.async_show_form(
             step_id="user", data_schema=CONNECTION_SCHEMA, errors=errors
         )
 
 
-class CannotConnect(HomeAssistantError):
+class CannotConnectError(HomeAssistantError):
     """Error to indicate we cannot connect."""
 
 
-class InvalidAuth(HomeAssistantError):
+class InvalidAuthError(HomeAssistantError):
     """Error to indicate there is invalid auth."""

@@ -1,0 +1,69 @@
+{
+  "name": "Home Assistant custom component development environment",
+  "dockerFile": "./Dockerfile",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {
+      "installDirectlyFromGitHubRelease": true,
+      "version": "latest"
+    },
+    "ghcr.io/schlich/devcontainer-features/rye:1": {
+      "uv": true
+    }
+  },
+  "forwardPorts": [8123],
+  "portsAttributes": {
+    "8123": {
+      "label": "Home Assistant",
+      "onAutoForward": "openBrowserOnce"
+    }
+  },
+  "runArgs": ["-e", "GIT_EDITOR=code --wait"],
+  "onCreateCommand": "rye config --set-bool behavior.use-uv=true",
+  "updateContentCommand": "rye sync",
+  "postCreateCommand": "mkdir -p ${containerWorkspaceFolder}/config",
+  "containerEnv": {
+    "DEVCONTAINER": "1",
+    "RYE_HOME": "/home/vscode/.rye"
+  },
+  "remoteUser": "vscode",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "charliermarsh.ruff",
+        "esbenp.prettier-vscode",
+        "GitHub.copilot",
+        "GitHub.vscode-github-actions",
+        "GitHub.vscode-pull-request-github",
+        "ms-python.pylint",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "redhat.vscode-yaml",
+        "tamasfe.even-better-toml",
+        "yzhang.markdown-all-in-one"
+      ],
+      "settings": {
+        "editor.formatOnPaste": false,
+        "editor.formatOnSave": true,
+        "editor.formatOnType": true,
+        "files.trimTrailingWhitespace": true,
+        "terminal.integrated.profiles.linux": {
+          "zsh": {
+            "path": "/usr/bin/zsh"
+          }
+        },
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "yaml.customTags": [
+          "!input scalar",
+          "!secret scalar",
+          "!include_dir_named scalar",
+          "!include_dir_list scalar",
+          "!include_dir_merge_list scalar",
+          "!include_dir_merge_named scalar"
+        ],
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff"
+        }
+      }
+    }
+  }
+}
