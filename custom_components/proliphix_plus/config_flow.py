@@ -15,14 +15,15 @@ from homeassistant.const import (
     CONF_SSL,
     CONF_USERNAME,
 )
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import DOMAIN
 from .proliphix.api import Proliphix
 
 if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigFlowResult
     from homeassistant.core import HomeAssistant
-    from homeassistant.data_entry_flow import FlowResult
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ CONNECTION_SCHEMA = vol.Schema(
 )
 
 
-async def validate_input(hass: "HomeAssistant", data: dict[str, Any]) -> dict[str, str]:
+async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, str]:
     """Validate the user input allows us to connect.
 
     Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
@@ -54,18 +55,24 @@ async def validate_input(hass: "HomeAssistant", data: dict[str, Any]) -> dict[st
     try:
         await proliphix.connect()
     except ConnectionError as connection_error:
-        _LOGGER.exception("Error connecting to Proliphix: %s", connection_error)
+        _LOGGER.exception("Error connecting to Proliphix")
         raise CannotConnectError from connection_error
 
-    config_entry_name = (
-        f"{getattr(proliphix, 'site_name', '')}: "
-        if getattr(proliphix, "site_name", None)
-        else ""
-    )
-    config_entry_name += getattr(proliphix, "name", None) or getattr(
-        proliphix, "serial_number", "Unknown"
-    )
-    return {"config_entry_name": config_entry_name}
+    site_name = getattr(proliphix, "site_name", None)
+    name = getattr(proliphix, "name", None)
+    serial = getattr(proliphix, "serial", None)
+    if not any([site_name, name, serial]):
+        msg = "No identifying information found on device"
+        raise CannotConnectError(msg)
+    config_entry_name = ""
+    if site_name:
+        config_entry_name += f"{site_name}: "
+    config_entry_name += name or serial or "Unknown"
+
+    return {
+        "config_entry_name": config_entry_name,
+        "serial": serial or "",
+    }
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -75,25 +82,26 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> "FlowResult":
+    ) -> ConfigFlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            unique_id = f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}"
-            await self.async_set_unique_id(unique_id)
-            self._abort_if_unique_id_configured()
             try:
                 info = await validate_input(self.hass, user_input)
+                serial = info.get("serial")
+                if not serial:
+                    errors["base"] = "cannot_connect"
+                else:
+                    await self.async_set_unique_id(serial)
+                    self._abort_if_unique_id_configured()
+                    return self.async_create_entry(
+                        title=info["config_entry_name"], data=user_input
+                    )
             except CannotConnectError:
                 errors["base"] = "cannot_connect"
             except Exception:  # pylint: disable=broad-except
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
-            else:
-                if info is not None and "config_entry_name" in info:
-                    return self.async_create_entry(
-                        title=info["config_entry_name"], data=user_input
-                    )
 
         return self.async_show_form(
             step_id="user", data_schema=CONNECTION_SCHEMA, errors=errors
@@ -101,6 +109,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class CannotConnectError(HomeAssistantError):
+    """Error to indicate we cannot connect."""
+
+    def __init__(self, message: str | None = None) -> None:
+        """Initialize CannotConnectError with an optional message."""
+        if message is None:
+            message = "Cannot connect to the device"
+        super().__init__(message)
+
     """Error to indicate we cannot connect."""
 
 

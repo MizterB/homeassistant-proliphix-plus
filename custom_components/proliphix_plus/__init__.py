@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from datetime import timedelta
 import logging
+from typing import TYPE_CHECKING
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_SSL, Platform
-from homeassistant.core import HomeAssistant
+
+if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.core import HomeAssistant
+
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -20,7 +24,6 @@ from homeassistant.helpers.update_coordinator import (
 from .const import DOMAIN
 from .proliphix.api import Proliphix
 
-# PLATFORMS: list[Platform] = [Platform.CLIMATE, Platform.SENSOR, Platform.BINARY_SENSOR]
 PLATFORMS: list[Platform] = [Platform.CLIMATE, Platform.SENSOR]
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,17 +34,16 @@ UPDATE_TIMEOUT = 30
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Proliphix from a config entry."""
-
     coordinator = ProliphixDataUpdateCoordinator(
         hass,
         entry.data[CONF_HOST],
         entry.data[CONF_PORT],
-        entry.data[CONF_SSL],
+        ssl=entry.data[CONF_SSL],
     )
     try:
         await coordinator.connect()
     except Exception as ex:
-        _LOGGER.error("Error connecting to Proliphix: %s", ex)
+        _LOGGER.exception("Error connecting to Proliphix")
         raise ConfigEntryNotReady from ex
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
@@ -60,8 +62,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 class ProliphixDataUpdateCoordinator(DataUpdateCoordinator):
     """Data update coordinator for Proliphix."""
 
-    def __init__(self, hass: HomeAssistant, host: str, port: int, ssl: bool) -> None:
-        """Initialize the coordinator."""
+    def __init__(
+        self, hass: HomeAssistant, host: str, port: int, *, ssl: bool = False
+    ) -> None:
+        """Initialize the ProliphixDataUpdateCoordinator."""
         super().__init__(
             hass,
             _LOGGER,
@@ -74,18 +78,31 @@ class ProliphixDataUpdateCoordinator(DataUpdateCoordinator):
         )
 
     async def connect(self) -> None:
-        """Connect to Proliphix."""
+        """Connect to Proliphix and validate core data."""
         await self.proliphix.connect()
         await self.proliphix.refresh_state()
         await self.proliphix.refresh_schedule()
+        # Validate core attributes
+        if not any(
+            [self.proliphix.serial, self.proliphix.name, self.proliphix.site_name]
+        ):
+            msg = "No identifying information found on device after connect."
+            raise ConfigEntryNotReady(msg)
 
     async def _async_update_data(self) -> None:
-        """Fetch data from Proliphix."""
+        """Fetch data from Proliphix and validate."""
         try:
             await self.proliphix.refresh_state()
             await self.proliphix.refresh_schedule()
+            # Validate after refresh as well
+            if not any(
+                [self.proliphix.serial, self.proliphix.name, self.proliphix.site_name]
+            ):
+                msg = "No identifying information found on device after refresh."
+                raise UpdateFailed(msg)
         except TimeoutError as err:
-            raise UpdateFailed(f"Timeout while communicating with API: {err}") from err
+            msg = f"Timeout while communicating with API: {err}"
+            raise UpdateFailed(msg) from err
 
 
 class ProliphixEntity(CoordinatorEntity[ProliphixDataUpdateCoordinator]):
@@ -96,10 +113,12 @@ class ProliphixEntity(CoordinatorEntity[ProliphixDataUpdateCoordinator]):
     def __init__(
         self,
         coordinator: ProliphixDataUpdateCoordinator,
-        **kwargs,
     ) -> None:
         """Init Proliphix entity."""
         self.proliphix = coordinator.proliphix
+        if not self.proliphix.serial:
+            msg = "Proliphix device serial is missing; cannot create entity."
+            raise ValueError(msg)
         super().__init__(coordinator)
 
     @property
@@ -110,15 +129,17 @@ class ProliphixEntity(CoordinatorEntity[ProliphixDataUpdateCoordinator]):
     @property
     def device_info(self) -> DeviceInfo:
         """Return a device description for device registry."""
+        device_name = ""
+        if self.proliphix.site_name:
+            device_name += f"{self.proliphix.site_name}: "
+        device_name += self.proliphix.name or self.proliphix.serial or "Unknown"
 
         return DeviceInfo(
-            identifiers={(DOMAIN, self.proliphix.serial)},
+            identifiers={(DOMAIN, self.proliphix.serial or "")},
             serial_number=self.proliphix.serial,
             manufacturer=self.proliphix.manufacturer,
             model=self.proliphix.model,
-            name=(
-                self.proliphix.name if self.proliphix.name else self.proliphix.serial
-            ),
+            name=device_name,
             sw_version=self.proliphix.firmware,
             configuration_url=f"{self.proliphix.url}",
         )
