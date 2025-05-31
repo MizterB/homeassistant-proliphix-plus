@@ -8,6 +8,7 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
+    SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, UnitOfTemperature
@@ -39,8 +40,10 @@ class ProliphixSensorDescription(
 SENSORS: tuple[ProliphixSensorDescription, ...] = (
     ProliphixSensorDescription(
         key="temperature_local",
-        name="Temperature",
-        entity_category=EntityCategory.DIAGNOSTIC,
+        name="Local Temperature",
+        native_unit_of_measurement=UnitOfTemperature.FAHRENHEIT,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda entity: entity.proliphix.temperature_local,
     ),
 )
